@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "loctest",
+  "version": "0.7",
+  "name": "LocTest",
+  "description": "Локальный Paper: запуск, плагины, консоль и отчёт о загрузке.",
+  "environment": "client",
+  "entrypoints": { "client": ["ru.paperlab.LocTestMod"] },
+  "depends": { "fabricloader": ">=0.19.5", "minecraft": "26.3", "java": ">=25" },
+  "license": "MIT"
+}
+
