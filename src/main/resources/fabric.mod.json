@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "loctest",
-  "version": "0.8",
+  "version": "0.9",
   "name": "LocTest",
   "description": "Запуск серверных ядер: JAR, Java arguments, программы; моды, плагины, консоль и отчёт.",
   "environment": "client",

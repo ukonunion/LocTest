@@ -59,6 +59,14 @@ public final class RunnerTest {
         Properties properties = new Properties();
         try (var reader = Files.newBufferedReader(home.resolve("server.properties"))) { properties.load(reader); }
         if (!"25576".equals(properties.getProperty("server-port")) || !"127.0.0.1".equals(properties.getProperty("server-ip"))) throw new AssertionError("Local settings not applied");
+        new NetworkConfig(true, "TCP 25576\nUDP 24454").save(home);
+        r.start(jarConfig); await(r, ServerRunner.State.READY); r.stop(); await(r, ServerRunner.State.STOPPED);
+        try (var reader = Files.newBufferedReader(home.resolve("server.properties"))) { properties.load(reader); }
+        if (!"".equals(properties.getProperty("server-ip"))) throw new AssertionError("LAN bind not applied");
+        new NetworkConfig(false, "TCP 25576").save(home);
+        r.start(jarConfig); await(r, ServerRunner.State.READY); r.stop(); await(r, ServerRunner.State.STOPPED);
+        try (var reader = Files.newBufferedReader(home.resolve("server.properties"))) { properties.load(reader); }
+        if (!"127.0.0.1".equals(properties.getProperty("server-ip"))) throw new AssertionError("Loopback bind not restored");
         Path argsFile = home.resolve("args with spaces.txt");
         // Forward slashes are portable Java argument-file paths, including Windows drive letters.
         Files.writeString(argsFile, "-cp\n\"" + String.join(File.pathSeparator, cp).replace('\\', '/') + "\"\n" + RunnerTest.class.getName());

@@ -13,13 +13,15 @@ $sources = @(Get-ChildItem src\main\java -Filter *.java -Recurse | ForEach-Objec
 & javac --release 25 -encoding UTF-8 -cp $LoaderJar -d build\classes $sources
 if ($LASTEXITCODE -ne 0) { throw 'Compilation failed' }
 Copy-Item src\main\resources\fabric.mod.json build\classes\fabric.mod.json -Force
-& jar --create --file loctest-0.7+26.3.jar --main-class ru.paperlab.Panel -C build\classes .
+& jar --create --file loctest-0.9+26.3.jar --main-class ru.paperlab.Panel -C build\classes .
 if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
 $tests = @(Get-ChildItem src\test\java -Filter *.java -Recurse | ForEach-Object FullName)
 & javac --release 25 -encoding UTF-8 -cp build\classes -d build\tests $tests
 if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed' }
 & java -cp 'build\classes;build\tests' ru.paperlab.RunnerTest
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
-Write-Host 'Built and tested: loctest-0.7+26.3.jar'
+& java -cp 'build\classes;build\tests' ru.paperlab.NetworkTest
+if ($LASTEXITCODE -ne 0) { throw 'Network tests failed' }
+Write-Host 'Built and tested: loctest-0.9+26.3.jar'
 } finally { Pop-Location }
 

@@ -49,7 +49,8 @@ public final class ServerRunner {
         Properties p = new Properties();
         Path propertiesFile = home.resolve("server.properties");
         if (Files.exists(propertiesFile)) try (var r = Files.newBufferedReader(propertiesFile)) { p.load(r); }
-        p.setProperty("server-ip", "127.0.0.1"); p.setProperty("server-port", "" + config.port());
+        NetworkConfig network = NetworkConfig.load(home, config.port());
+        p.setProperty("server-ip", network.lan() ? "" : "127.0.0.1"); p.setProperty("server-port", "" + config.port());
         p.setProperty("enable-rcon", "false"); p.setProperty("enable-query", "false");
         p.putIfAbsent("online-mode", "true"); p.putIfAbsent("view-distance", "6");
         p.putIfAbsent("simulation-distance", "4"); p.putIfAbsent("motd", "LocTest");

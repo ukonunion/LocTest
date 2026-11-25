@@ -11,7 +11,7 @@ import java.nio.file.*;
 import java.util.jar.JarFile;
 
 public final class Panel {
-    private final JFrame frame = new JFrame("LocTest 0.8 • запуск серверных ядер");
+    private final JFrame frame = new JFrame("LocTest 0.9 • запуск серверных ядер");
     private final JTextArea console = new JTextArea();
     private final JLabel status = new JLabel("Остановлен");
     private final Path home;
@@ -39,6 +39,7 @@ public final class Panel {
         console.setEditable(false); console.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT));
         button(buttons, "Ядро и запуск…", this::settings);
+        button(buttons, "Порты…", this::ports);
         button(buttons, "Добавить плагины", () -> addFiles(false));
         button(buttons, "Добавить моды", () -> addFiles(true));
         button(buttons, "Папка сервера", () -> Desktop.getDesktop().open(config.directory().toFile()));
@@ -110,8 +111,67 @@ public final class Panel {
         chooser.setFileFilter(new FileNameExtensionFilter("Java архив (*.jar)", "jar")); return chooser;
     }
     private void updateConnection() {
-        connection.setText(config.localSettings() ? "  Локальный сервер: 127.0.0.1:" + config.port() + " • " + config.mode()
-            : "  " + config.mode() + " • адрес и порт задаются конфигурацией ядра");
+        try {
+            boolean lan = NetworkConfig.load(config.directory(), config.port()).lan();
+            connection.setText(config.localSettings() ? (lan ? "  LAN: <IP этого компьютера>:" : "  Локальный сервер: 127.0.0.1:") + config.port() + " • " + config.mode()
+                : "  " + config.mode() + " • адрес и порт задаются конфигурацией ядра");
+        } catch (IOException e) { connection.setText("Ошибка настроек сети: " + e.getMessage()); }
+    }
+    private void ports() throws Exception {
+        if (busy.get()) throw new IOException("Дождитесь завершения текущей операции");
+        NetworkConfig current = NetworkConfig.load(config.directory(), config.port());
+        JTextArea entries = new JTextArea(current.ports(), 9, 52);
+        JCheckBox lan = new JCheckBox("Разрешить ядру слушать сеть (server-ip пустой вместо 127.0.0.1)", current.lan());
+        lan.setEnabled(config.localSettings());
+        JLabel result = new JLabel("Сохранение списка не меняет брандмауэр. Применение — отдельная кнопка.");
+        JPanel content = new JPanel(new BorderLayout(8, 8));
+        content.add(new JLabel("<html>Один порт на строку: <b>TCP 25575</b> или <b>UDP 24454</b>.<br>Правила: входящие, только локальная подсеть, профили Частный и Доменный.<br>Плагин/мод должен сам слушать указанный порт — настройте его конфиг.<br>Изменение адреса ядра действует после перезапуска; при ручных настройках ядра задайте адрес сами.<br>Правила сохраняются после закрытия панели. Для отмены нажмите «Удалить правила».</html>"), BorderLayout.NORTH);
+        content.add(new JScrollPane(entries));
+        JPanel bottom = new JPanel(); bottom.setLayout(new BoxLayout(bottom, BoxLayout.Y_AXIS));
+        bottom.add(lan); bottom.add(result);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT)); bottom.add(actions); content.add(bottom, BorderLayout.SOUTH);
+        Action save = () -> {
+            if (busy.get()) throw new IOException("Дождитесь завершения текущей операции");
+            NetworkConfig next = new NetworkConfig(lan.isSelected(), entries.getText());
+            next.normalized();
+            if (next.lan() != NetworkConfig.load(config.directory(), config.port()).lan()) stopped();
+            next.save(config.directory()); entries.setText(next.normalized()); updateConnection();
+            result.setText("Список сохранён. Брандмауэр этой кнопкой не изменяется.");
+        };
+        button(actions, "+ порт сервера", () -> {
+            entries.append("\nTCP " + config.port());
+            entries.setText(new NetworkConfig(lan.isSelected(), entries.getText()).normalized());
+        });
+        button(actions, "Сохранить", save);
+        button(actions, "Применить правила", () -> {
+            var selected = NetworkConfig.parse(entries.getText());
+            if (selected.isEmpty()) throw new IOException("Добавьте порты или используйте «Удалить правила»");
+            save.run();
+            result.setText("Ожидание ответа Windows / запроса администратора…");
+            background(() -> {
+                try {
+                    WindowsFirewall.apply(config.directory(), selected, false);
+                    SwingUtilities.invokeLater(() -> result.setText("Правила применены. Это не проверка доступности сервиса."));
+                    log("LAN-правила Windows применены: " + selected + ". Профили Private/Domain, источники LocalSubnet.");
+                } catch (Exception e) {
+                    SwingUtilities.invokeLater(() -> result.setText("Не выполнено: " + e.getMessage())); throw e;
+                }
+            });
+        });
+        button(actions, "Удалить правила", () -> {
+            if (busy.get()) throw new IOException("Дождитесь завершения текущей операции");
+            result.setText("Ожидание удаления правил / запроса администратора…");
+            background(() -> {
+                try {
+                    WindowsFirewall.apply(config.directory(), java.util.List.of(), true);
+                    SwingUtilities.invokeLater(() -> result.setText("Правила LocTest этой папки удалены. Другие правила не изменены."));
+                    log("Удалены правила LocTest для " + config.directory());
+                } catch (Exception e) {
+                    SwingUtilities.invokeLater(() -> result.setText("Не выполнено: " + e.getMessage())); throw e;
+                }
+            });
+        });
+        JOptionPane.showMessageDialog(frame, content, "Дополнительные порты Windows", JOptionPane.PLAIN_MESSAGE);
     }
     private void settings() throws Exception {
         if (busy.get()) throw new IOException("Дождитесь завершения текущей операции");
@@ -125,7 +185,7 @@ public final class Panel {
         JTextField stop = new JTextField(config.stopCommand()), ready = new JTextField(config.readyMarker());
         JSpinner ram = new JSpinner(new SpinnerNumberModel(config.memoryMb(), 512, 131072, 512));
         JSpinner port = new JSpinner(new SpinnerNumberModel(config.port(), 1, 65535, 1));
-        JCheckBox local = new JCheckBox("Настроить server.properties: 127.0.0.1, порт ниже, RCON/query выключены", config.localSettings());
+        JCheckBox local = new JCheckBox("Настроить server.properties: адрес из окна «Порты», порт ниже, RCON/query выключены", config.localSettings());
         JPanel fields = new JPanel(new GridBagLayout());
         int row = 0;
         field(fields, row++, "Режим", mode);
