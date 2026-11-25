@@ -55,7 +55,14 @@ public final class RunnerTest {
             jar.getFileName().toString(), "", "ok", 512, 25576, true, "stop", "Done (");
         try { r.start(jarConfig); throw new AssertionError("Missing EULA accepted"); } catch (IOException expected) {}
         Files.writeString(home.resolve("eula.txt"), "eula=true\n");
-        r.start(jarConfig); await(r, ServerRunner.State.READY); r.stop(); await(r, ServerRunner.State.STOPPED);
+        r.start(jarConfig); await(r, ServerRunner.State.READY);
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        while (r.telemetry().isEmpty() && System.nanoTime() < deadline) Thread.sleep(20);
+        Properties heap = r.telemetry();
+        if (Long.parseLong(heap.getProperty("max", "-1")) != 512L * 1024 * 1024 || Long.parseLong(heap.getProperty("used", "-1")) <= 0)
+            throw new AssertionError("Real server JVM heap telemetry missing");
+        r.stop(); await(r, ServerRunner.State.STOPPED);
+        if (!r.telemetry().isEmpty()) throw new AssertionError("Stale heap after stop");
         Properties properties = new Properties();
         try (var reader = Files.newBufferedReader(home.resolve("server.properties"))) { properties.load(reader); }
         if (!"25576".equals(properties.getProperty("server-port")) || !"127.0.0.1".equals(properties.getProperty("server-ip"))) throw new AssertionError("Local settings not applied");

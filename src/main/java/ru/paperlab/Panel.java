@@ -12,7 +12,8 @@ import java.util.jar.JarFile;
 
 public final class Panel {
     private final JFrame frame = new JFrame("LocTest 1.0 • запуск серверных ядер");
-    private final JTextArea console = new JTextArea();
+    private final ConsoleView console = new ConsoleView();
+    private boolean dark = true;
     private final JLabel status = new JLabel("Остановлен");
     private final Path home;
     private volatile ServerRunner runner;
@@ -32,6 +33,9 @@ public final class Panel {
         if (lock == null) { lockChannel.close(); throw new IOException("Панель для этой папки уже открыта"); }
         config = LaunchConfig.load(this.home.resolve("launcher.properties"), this.home);
         runner = new ServerRunner(config.directory(), this::log);
+        Path themeFile = this.home.resolve("theme.txt");
+        if (Files.exists(themeFile)) dark = !Files.readString(themeFile).strip().equals("light");
+        Theme.defaults(dark);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> runner.close()));
         build();
     }
@@ -67,10 +71,20 @@ public final class Panel {
             background(() -> runner.command(text));
         });
         JPanel bottom = new JPanel(new BorderLayout()); bottom.add(new JLabel(" Команда: "), BorderLayout.WEST); bottom.add(command);
-        SystemMonitor monitor = new SystemMonitor(() -> config.directory(), () -> runner.processHandle());
-        JTabbedPane tabs = new JTabbedPane(); tabs.addTab("Система", monitor); tabs.addTab("Консоль", new JScrollPane(console));
-        frame.add(top, BorderLayout.NORTH); frame.add(tabs); frame.add(bottom, BorderLayout.SOUTH);
-        frame.setSize(1180, 820); frame.setLocationByPlatform(true);
+        SystemMonitor monitor = new SystemMonitor(() -> runner);
+        JPanel terminal = new JPanel(new BorderLayout()); terminal.add(new JScrollPane(console)); terminal.add(bottom, BorderLayout.SOUTH);
+        JScrollPane performance = new JScrollPane(monitor); performance.setMinimumSize(new Dimension(350,200));
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, terminal, performance);
+        split.setResizeWeight(1); split.setDividerLocation(800); split.setContinuousLayout(true);
+        JComboBox<String> themes = new JComboBox<>(new String[]{"Тёмная", "Светлая"}); themes.setSelectedIndex(dark ? 0 : 1);
+        control.add(new JLabel("Тема:")); control.add(themes);
+        themes.addActionListener(e -> {
+            dark = themes.getSelectedIndex() == 0; Theme.defaults(dark); Theme.apply(frame.getContentPane(),dark);
+            try { Files.writeString(home.resolve("theme.txt"),dark?"dark":"light"); } catch(IOException ex){error(ex);}
+        });
+        frame.add(top, BorderLayout.NORTH); frame.add(split);
+        frame.setSize(1260, 850); frame.setMinimumSize(new Dimension(1000,650)); frame.setLocationByPlatform(true);
+        Theme.apply(frame.getContentPane(),dark);
         frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         frame.addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent event) {
             if (runner.running() && JOptionPane.showConfirmDialog(frame, "Остановить сервер и закрыть панель?", "LocTest", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
@@ -101,9 +115,7 @@ public final class Panel {
     }
     private void error(Exception e) { log("ОШИБКА: " + e.getMessage()); }
     private void log(String line) { SwingUtilities.invokeLater(() -> {
-        console.append(line + "\n");
-        if (console.getDocument().getLength() > 250000) console.replaceRange("", 0, 50000);
-        console.setCaretPosition(console.getDocument().getLength());
+        console.appendLine(line);
     }); }
     private void stopped() throws IOException {
         if (runner.running() || runner.state() == ServerRunner.State.STARTING || runner.state() == ServerRunner.State.STOPPING)
@@ -263,7 +275,7 @@ public final class Panel {
     public static void main(String[] args) {
         Path home = args.length == 0 ? (Files.isDirectory(Path.of("paperlab")) ? Path.of("paperlab") : Path.of("loctest")) : Path.of(args[0]);
         SwingUtilities.invokeLater(() -> {
-            try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); new Panel(home); }
+            try { UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName()); new Panel(home); }
             catch (Exception e) { JOptionPane.showMessageDialog(null, e.toString(), "LocTest", JOptionPane.ERROR_MESSAGE); System.exit(1); }
         });
     }

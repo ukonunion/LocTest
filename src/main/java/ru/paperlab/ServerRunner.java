@@ -23,6 +23,22 @@ public final class ServerRunner {
     private String stopCommand = "stop";
     private String readyMarker = "Done (";
     private String launchDescription = "";
+    public final GameMetrics metrics = new GameMetrics();
+    private Path telemetry;
+    private boolean queriesEnabled;
+    public synchronized Properties telemetry() {
+        Properties p = new Properties();
+        if (process == null || telemetry == null) return p;
+        try (var reader = Files.newBufferedReader(telemetry)) {
+            p.load(reader);
+            long age = System.currentTimeMillis() - Long.parseLong(p.getProperty("timestamp", "0"));
+            if (age < 0 || age > 5000 || Long.parseLong(p.getProperty("pid", "-1")) != process.pid()) p.clear();
+        } catch (Exception e) { p.clear(); }
+        return p;
+    }
+    public synchronized void pollGameMetrics() throws IOException {
+        if (queriesEnabled && state == State.READY) { command("list"); if (metrics.supportsTps()) command("tps"); }
+    }
 
     public ServerRunner(Path home, Consumer<String> output) throws IOException {
         this.home = home.toAbsolutePath(); this.output = output;
@@ -41,7 +57,7 @@ public final class ServerRunner {
     public synchronized void start(LaunchConfig config) throws IOException {
         if (running()) throw new IOException("Сервер уже запущен");
         if (!home.normalize().equals(config.directory().toAbsolutePath().normalize())) throw new IOException("Папка запуска не совпадает");
-        List<String> command = config.command();
+        List<String> command = new ArrayList<>(config.command());
         Properties eula = new Properties();
         if (Files.exists(home.resolve("eula.txt"))) try (var r = Files.newBufferedReader(home.resolve("eula.txt"))) { eula.load(r); }
         if (!"true".equals(eula.getProperty("eula"))) throw new IOException("Прочитайте и примите Minecraft EULA в панели");
@@ -59,6 +75,17 @@ public final class ServerRunner {
         }
         stopCommand = config.stopCommand(); readyMarker = config.readyMarker();
         launchDescription = "Режим: " + config.mode() + ", Java/программа: " + config.executable() + ", JAR: " + config.jar();
+        telemetry = null; queriesEnabled = config.mode() != LaunchConfig.Mode.COMMAND;
+        if (queriesEnabled) {
+            Path directory = home.resolve(".loctest"); Files.createDirectories(directory);
+            Path agent = directory.resolve("telemetry-agent.jar");
+            try (var resource = ServerRunner.class.getResourceAsStream("/telemetry-agent.jar")) {
+                if (resource == null) throw new IOException("В сборке отсутствует telemetry-agent.jar");
+                Files.copy(resource, agent, StandardCopyOption.REPLACE_EXISTING);
+            }
+            telemetry = directory.resolve("telemetry-" + UUID.randomUUID() + ".properties");
+            command.add(1, "-javaagent:" + agent + "=" + Base64.getUrlEncoder().encodeToString(telemetry.toString().getBytes(StandardCharsets.UTF_8)));
+        }
         launch(command);
     }
     static String javaExecutable() {
@@ -67,6 +94,7 @@ public final class ServerRunner {
     synchronized void launch(List<String> command) throws IOException {
         if (running()) throw new IOException("Сервер уже запущен");
         evidence.clear(); exitCode = null; reachedReady = false; started = Instant.now(); state = State.STARTING;
+        metrics.reset();
         final Process child;
         try { child = new ProcessBuilder(command).directory(home.toFile()).redirectErrorStream(true).start(); }
         catch (IOException e) { state = State.FAILED; throw e; }
@@ -89,12 +117,15 @@ public final class ServerRunner {
                     state = code == 0 && (reachedReady || state == State.STOPPING || state == State.RUNNING) ? State.STOPPED : State.FAILED;
                     input = null;
                     process = null;
+                    metrics.reset();
+                    if (telemetry != null) try { Files.deleteIfExists(telemetry); Files.deleteIfExists(telemetry.resolveSibling(telemetry.getFileName()+".tmp")); } catch (IOException ignored) {}
                 }
                 output.accept("Процесс сервера завершён, код " + code);
             } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         });
     }
     void observe(String line) {
+        metrics.observe(line);
         if (!readyMarker.isBlank() && line.contains(readyMarker)) {
             reachedReady = true;
             if (state == State.STARTING) state = State.READY;
