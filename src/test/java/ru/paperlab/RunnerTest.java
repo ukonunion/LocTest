@@ -8,9 +8,11 @@ public final class RunnerTest {
     public static void main(String[] args) throws Exception {
         if (args.length > 0) {
             if (args[0].equals("fail")) { System.out.println("ERROR Could not load plugin"); System.exit(2); }
-            System.out.println("[Server thread/INFO]: Done (0.3s)! For help, type \"help\"");
+            boolean custom = args[0].equals("custom");
+            if (custom && !args[1].equals("space ; & $()")) throw new AssertionError("Arguments damaged");
+            System.out.println(custom ? "CUSTOM ONLINE" : "[Server thread/INFO]: Done (0.3s)! For help, type \"help\"");
             try (var in = new BufferedReader(new InputStreamReader(System.in))) {
-                while (true) { String line = in.readLine(); if (line == null || line.equals("stop")) break; }
+                while (true) { String line = in.readLine(); if (line == null || line.equals(custom ? "halt" : "stop")) break; }
             }
             return;
         }
@@ -36,8 +38,43 @@ public final class RunnerTest {
             Path invalid = home.resolve("invalid.jar");
             try (var out = new JarOutputStream(Files.newOutputStream(invalid))) {}
             try { ServerRunner.inspect(invalid); throw new AssertionError("Invalid plugin accepted"); } catch (IOException expected) {}
+            testModes(home, r, cp);
             System.out.println("PASS: readiness, stop, restart, failure report, duplicate start, command validation, plugin descriptors");
         } finally { r.close(); }
+    }
+    private static void testModes(Path home, ServerRunner r, List<String> cp) throws Exception {
+        Path jar = home.resolve("server with spaces.jar");
+        Manifest manifest = new Manifest(); manifest.getMainAttributes().putValue("Manifest-Version", "1.0");
+        manifest.getMainAttributes().putValue("Main-Class", RunnerTest.class.getName());
+        try (var out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("ru/paperlab/RunnerTest.class"));
+            try (var in = RunnerTest.class.getResourceAsStream("RunnerTest.class")) { in.transferTo(out); }
+            out.closeEntry();
+        }
+        LaunchConfig jarConfig = new LaunchConfig(home, LaunchConfig.Mode.JAR, ServerRunner.javaExecutable(),
+            jar.getFileName().toString(), "", "ok", 512, 25576, true, "stop", "Done (");
+        try { r.start(jarConfig); throw new AssertionError("Missing EULA accepted"); } catch (IOException expected) {}
+        Files.writeString(home.resolve("eula.txt"), "eula=true\n");
+        r.start(jarConfig); await(r, ServerRunner.State.READY); r.stop(); await(r, ServerRunner.State.STOPPED);
+        Properties properties = new Properties();
+        try (var reader = Files.newBufferedReader(home.resolve("server.properties"))) { properties.load(reader); }
+        if (!"25576".equals(properties.getProperty("server-port")) || !"127.0.0.1".equals(properties.getProperty("server-ip"))) throw new AssertionError("Local settings not applied");
+        Path argsFile = home.resolve("args with spaces.txt");
+        // Forward slashes are portable Java argument-file paths, including Windows drive letters.
+        Files.writeString(argsFile, "-cp\n\"" + String.join(File.pathSeparator, cp).replace('\\', '/') + "\"\n" + RunnerTest.class.getName());
+        LaunchConfig javaConfig = new LaunchConfig(home, LaunchConfig.Mode.JAVA_ARGS, ServerRunner.javaExecutable(),
+            "", "-Dpaperlab.test=true", "@" + argsFile + "\ncustom\nspace ; & $()", 512, 25575, false, "halt", "CUSTOM ONLINE");
+        Path settings = home.resolve("launcher.properties"); javaConfig.save(settings);
+        if (!javaConfig.equals(LaunchConfig.load(settings, home))) throw new AssertionError("Settings round trip failed");
+        String original = Files.readString(home.resolve("server.properties"));
+        r.start(javaConfig); await(r, ServerRunner.State.READY); r.stop(); await(r, ServerRunner.State.STOPPED);
+        if (!original.equals(Files.readString(home.resolve("server.properties")))) throw new AssertionError("Unrequested settings change");
+        LaunchConfig raw = new LaunchConfig(home, LaunchConfig.Mode.COMMAND, ServerRunner.javaExecutable(), "", "IGNORED", 
+            "-cp\n" + String.join(File.pathSeparator, cp) + "\n" + RunnerTest.class.getName() + "\ncustom\nspace ; & $()",
+            512, 25575, false, "halt", "");
+        if (raw.command().contains("-Xmx512M") || raw.command().contains("IGNORED")) throw new AssertionError("COMMAND injected JVM args");
+        r.start(raw); await(r, ServerRunner.State.RUNNING); r.stop(); await(r, ServerRunner.State.STOPPED);
+        System.out.println("PASS: executable JAR, Java @argfile, raw command, paths with spaces, literal arguments, EULA, custom stop/readiness, config persistence, local settings opt-out");
     }
     private static void await(ServerRunner r, ServerRunner.State target) throws Exception {
         long end = System.nanoTime() + 10_000_000_000L;

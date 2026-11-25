@@ -10,7 +10,7 @@ import java.util.function.Consumer;
 import java.util.jar.JarFile;
 
 public final class ServerRunner {
-    public enum State { STOPPED, STARTING, READY, STOPPING, FAILED }
+    public enum State { STOPPED, STARTING, RUNNING, READY, STOPPING, FAILED }
     private volatile State state = State.STOPPED;
     private Process process;
     private BufferedWriter input;
@@ -20,32 +20,44 @@ public final class ServerRunner {
     private volatile Instant started;
     private volatile Integer exitCode;
     private volatile boolean reachedReady;
+    private String stopCommand = "stop";
+    private String readyMarker = "Done (";
+    private String launchDescription = "";
 
     public ServerRunner(Path home, Consumer<String> output) throws IOException {
         this.home = home.toAbsolutePath(); this.output = output;
         Files.createDirectories(home.resolve("plugins"));
+        Files.createDirectories(home.resolve("mods"));
     }
     public State state() { return state; }
     // Keep the session busy until the log reader has drained and finalized state.
     public synchronized boolean running() { return process != null; }
     public synchronized void start(int memoryMb) throws IOException {
+        LaunchConfig d = LaunchConfig.defaults(home);
+        start(new LaunchConfig(home, d.mode(), d.executable(), d.jar(), "", "nogui", memoryMb,
+            d.port(), true, "stop", "Done ("));
+    }
+    public synchronized void start(LaunchConfig config) throws IOException {
         if (running()) throw new IOException("Сервер уже запущен");
-        if (memoryMb < 1024 || memoryMb > 32768) throw new IOException("RAM: от 1024 до 32768 МБ");
-        Path jar = home.resolve("paper.jar");
-        if (!Files.isRegularFile(jar)) throw new IOException("Сначала выберите JAR Paper 26.3");
+        if (!home.normalize().equals(config.directory().toAbsolutePath().normalize())) throw new IOException("Папка запуска не совпадает");
+        List<String> command = config.command();
         Properties eula = new Properties();
         if (Files.exists(home.resolve("eula.txt"))) try (var r = Files.newBufferedReader(home.resolve("eula.txt"))) { eula.load(r); }
         if (!"true".equals(eula.getProperty("eula"))) throw new IOException("Прочитайте и примите Minecraft EULA в панели");
-        // Keep user settings, but enforce a local-only listener on every start.
+        // Proxies and nonstandard cores can opt out of Minecraft server.properties.
+        if (config.localSettings()) {
         Properties p = new Properties();
-        Path config = home.resolve("server.properties");
-        if (Files.exists(config)) try (var r = Files.newBufferedReader(config)) { p.load(r); }
-        p.setProperty("server-ip", "127.0.0.1"); p.setProperty("server-port", "25575");
+        Path propertiesFile = home.resolve("server.properties");
+        if (Files.exists(propertiesFile)) try (var r = Files.newBufferedReader(propertiesFile)) { p.load(r); }
+        p.setProperty("server-ip", "127.0.0.1"); p.setProperty("server-port", "" + config.port());
         p.setProperty("enable-rcon", "false"); p.setProperty("enable-query", "false");
         p.putIfAbsent("online-mode", "true"); p.putIfAbsent("view-distance", "6");
-        p.putIfAbsent("simulation-distance", "4"); p.putIfAbsent("motd", "LocTest 26.3");
-        try (var w = Files.newBufferedWriter(config)) { p.store(w, "LocTest local test server"); }
-        launch(List.of(javaExecutable(), "-Xms512M", "-Xmx" + memoryMb + "M", "-jar", jar.toString(), "--nogui"));
+        p.putIfAbsent("simulation-distance", "4"); p.putIfAbsent("motd", "LocTest");
+        try (var w = Files.newBufferedWriter(propertiesFile)) { p.store(w, "LocTest local test server"); }
+        }
+        stopCommand = config.stopCommand(); readyMarker = config.readyMarker();
+        launchDescription = "Режим: " + config.mode() + ", Java/программа: " + config.executable() + ", JAR: " + config.jar();
+        launch(command);
     }
     static String javaExecutable() {
         return Path.of(System.getProperty("java.home"), "bin", System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java").toString();
@@ -57,6 +69,7 @@ public final class ServerRunner {
         try { child = new ProcessBuilder(command).directory(home.toFile()).redirectErrorStream(true).start(); }
         catch (IOException e) { state = State.FAILED; throw e; }
         process = child;
+        if (readyMarker.isBlank()) state = State.RUNNING;
         input = new BufferedWriter(new OutputStreamWriter(child.getOutputStream(), StandardCharsets.UTF_8));
         Thread.ofVirtual().name("paperlab-output").start(() -> {
             try (var reader = new BufferedReader(new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8));
@@ -71,16 +84,16 @@ public final class ServerRunner {
                 int code = child.waitFor();
                 synchronized (this) {
                     exitCode = code;
-                    state = code == 0 && (reachedReady || state == State.STOPPING) ? State.STOPPED : State.FAILED;
+                    state = code == 0 && (reachedReady || state == State.STOPPING || state == State.RUNNING) ? State.STOPPED : State.FAILED;
                     input = null;
                     process = null;
                 }
-                output.accept("Процесс Paper завершён, код " + code);
+                output.accept("Процесс сервера завершён, код " + code);
             } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         });
     }
     void observe(String line) {
-        if (line.contains("Done (") && line.contains("For help")) {
+        if (!readyMarker.isBlank() && line.contains(readyMarker)) {
             reachedReady = true;
             if (state == State.STARTING) state = State.READY;
         }
@@ -96,7 +109,7 @@ public final class ServerRunner {
     }
     public synchronized void stop() throws IOException {
         if (!running()) return;
-        command("stop"); state = State.STOPPING;
+        command(stopCommand); state = State.STOPPING;
     }
     public void close() {
         Process child;
@@ -109,7 +122,9 @@ public final class ServerRunner {
         try (JarFile jar = new JarFile(path.toFile())) {
             var descriptor = jar.getJarEntry("paper-plugin.yml");
             if (descriptor == null) descriptor = jar.getJarEntry("plugin.yml");
-            if (descriptor == null) throw new IOException(path.getFileName() + ": нет plugin.yml или paper-plugin.yml");
+            if (descriptor == null) descriptor = jar.getJarEntry("bungee.yml");
+            if (descriptor == null) descriptor = jar.getJarEntry("velocity-plugin.json");
+            if (descriptor == null) throw new IOException(path.getFileName() + ": нет дескриптора Bukkit/Paper/Bungee/Velocity");
             try (var in = jar.getInputStream(descriptor)) {
                 byte[] bytes = in.readNBytes(65537);
                 if (bytes.length > 65536) throw new IOException("Слишком большой дескриптор: " + path.getFileName());
@@ -130,10 +145,11 @@ public final class ServerRunner {
     public Path report() throws IOException {
         StringBuilder b = new StringBuilder("LocTest — отчёт о запуске\n");
         b.append("Дата: ").append(Instant.now()).append("\nЗапуск: ").append(started)
-            .append("\nСостояние: ").append(state).append("\nPaper готовился успешно: ").append(reachedReady)
+            .append("\n").append(launchDescription).append("\nПапка: ").append(home)
+            .append("\nСостояние: ").append(state).append("\nНайден маркер готовности: ").append(reachedReady)
             .append("\nКод выхода: ").append(exitCode).append("\n\n");
         b.append("Готовность сервера не доказывает исправность всех плагинов.\n")
-            .append("Проверьте команды, события, права и зависимости в игре.\nВерсию Paper сверяйте по команде version.\n\n")
+            .append("Проверьте команды, события, права и зависимости в игре.\nВерсию ядра смотрите в логе запуска.\n\n")
             .append(inventory()).append("\nПредупреждения и сообщения плагинов (до 5000 строк):\n");
         synchronized (evidence) { evidence.forEach(s -> b.append(s).append('\n')); }
         Path report = home.resolve("report.txt"); Files.writeString(report, b); return report;
