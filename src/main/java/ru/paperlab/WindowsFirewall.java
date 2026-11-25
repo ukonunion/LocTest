@@ -9,7 +9,7 @@ import java.util.*;
 public final class WindowsFirewall {
     static String group(Path directory) {
         String path = directory.toAbsolutePath().normalize().toString().toLowerCase(Locale.ROOT);
-        return "LocTest-" + UUID.nameUUIDFromBytes(path.getBytes(StandardCharsets.UTF_8));
+        return "PaperLab-" + UUID.nameUUIDFromBytes(path.getBytes(StandardCharsets.UTF_8)); // preserve ownership of pre-rename rules
     }
     public static String script(Path directory, List<NetworkConfig.Port> ports, boolean remove) {
         String group = group(directory);
@@ -61,4 +61,3 @@ public final class WindowsFirewall {
         if (exit != 0) throw new IOException("Windows не применила все правила (код " + exit + "). Возможно частичное изменение. Проверьте брандмауэр или удалите правила кнопкой в панели.");
     }
 }
-

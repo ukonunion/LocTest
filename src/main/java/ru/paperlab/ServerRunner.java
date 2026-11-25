@@ -30,6 +30,7 @@ public final class ServerRunner {
         Files.createDirectories(home.resolve("mods"));
     }
     public State state() { return state; }
+    public synchronized ProcessHandle processHandle() { return process == null ? null : process.toHandle(); }
     // Keep the session busy until the log reader has drained and finalized state.
     public synchronized boolean running() { return process != null; }
     public synchronized void start(int memoryMb) throws IOException {
@@ -156,4 +157,3 @@ public final class ServerRunner {
         Path report = home.resolve("report.txt"); Files.writeString(report, b); return report;
     }
 }
-

@@ -62,4 +62,3 @@ public record LaunchConfig(Path directory, Mode mode, String executable, String 
         } catch (IllegalArgumentException e) { throw new IOException("Некорректный launcher.properties: " + e.getMessage(), e); }
     }
 }
-

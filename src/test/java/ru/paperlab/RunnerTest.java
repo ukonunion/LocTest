@@ -90,4 +90,3 @@ public final class RunnerTest {
         if (r.state() != target) throw new AssertionError("Expected " + target + ", got " + r.state());
     }
 }
-

@@ -1,12 +1,22 @@
 {
   "schemaVersion": 1,
   "id": "loctest",
-  "version": "0.9",
+  "version": "1.0",
   "name": "LocTest",
-  "description": "Запуск серверных ядер: JAR, Java arguments, программы; моды, плагины, консоль и отчёт.",
+  "description": "Локальные серверные ядра, системный монитор CPU/ОЗУ/диска, консоль и управление LAN-портами.",
   "environment": "client",
-  "entrypoints": { "client": ["ru.paperlab.LocTestMod"] },
-  "depends": { "fabricloader": ">=0.19.5", "minecraft": "26.3", "java": ">=25" },
-  "license": "MIT"
+  "entrypoints": {
+    "client": [
+      "ru.paperlab.LocTestMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "26.3",
+    "java": ">=25"
+  },
+  "license": "MIT",
+  "breaks": {
+    "paperlab": "*"
+  }
 }
-

@@ -11,7 +11,7 @@ import java.nio.file.*;
 import java.util.jar.JarFile;
 
 public final class Panel {
-    private final JFrame frame = new JFrame("LocTest 0.9 • запуск серверных ядер");
+    private final JFrame frame = new JFrame("LocTest 1.0 • запуск серверных ядер");
     private final JTextArea console = new JTextArea();
     private final JLabel status = new JLabel("Остановлен");
     private final Path home;
@@ -67,12 +67,15 @@ public final class Panel {
             background(() -> runner.command(text));
         });
         JPanel bottom = new JPanel(new BorderLayout()); bottom.add(new JLabel(" Команда: "), BorderLayout.WEST); bottom.add(command);
-        frame.add(top, BorderLayout.NORTH); frame.add(new JScrollPane(console)); frame.add(bottom, BorderLayout.SOUTH);
-        frame.setSize(1100, 650); frame.setLocationByPlatform(true);
+        SystemMonitor monitor = new SystemMonitor(() -> config.directory(), () -> runner.processHandle());
+        JTabbedPane tabs = new JTabbedPane(); tabs.addTab("Система", monitor); tabs.addTab("Консоль", new JScrollPane(console));
+        frame.add(top, BorderLayout.NORTH); frame.add(tabs); frame.add(bottom, BorderLayout.SOUTH);
+        frame.setSize(1180, 820); frame.setLocationByPlatform(true);
         frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         frame.addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent event) {
             if (runner.running() && JOptionPane.showConfirmDialog(frame, "Остановить сервер и закрыть панель?", "LocTest", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
             frame.setEnabled(false);
+            monitor.close();
             jobs.submit(() -> {
                 runner.close();
                 try { lock.release(); lockChannel.close(); } catch (IOException ignored) {}
@@ -258,11 +261,10 @@ public final class Panel {
     }
     private static void browse(String url) throws IOException { Desktop.getDesktop().browse(URI.create(url)); }
     public static void main(String[] args) {
-        Path home = args.length == 0 ? Path.of("paperlab") : Path.of(args[0]);
+        Path home = args.length == 0 ? (Files.isDirectory(Path.of("paperlab")) ? Path.of("paperlab") : Path.of("loctest")) : Path.of(args[0]);
         SwingUtilities.invokeLater(() -> {
             try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); new Panel(home); }
             catch (Exception e) { JOptionPane.showMessageDialog(null, e.toString(), "LocTest", JOptionPane.ERROR_MESSAGE); System.exit(1); }
         });
     }
 }
-

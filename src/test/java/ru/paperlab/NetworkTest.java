@@ -71,4 +71,3 @@ public final class NetworkTest {
         if (process.exitValue() != 0) throw new AssertionError("Mocked script failed: " + output);
     }
 }
-

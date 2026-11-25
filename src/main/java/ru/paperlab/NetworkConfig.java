@@ -42,4 +42,3 @@ public record NetworkConfig(boolean lan, String ports) {
         return result;
     }
 }
-

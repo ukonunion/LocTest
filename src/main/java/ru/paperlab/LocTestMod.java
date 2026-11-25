@@ -9,7 +9,8 @@ public final class LocTestMod implements ClientModInitializer {
     @Override public void onInitializeClient() {
         try {
             Path jar = Path.of(LocTestMod.class.getProtectionDomain().getCodeSource().getLocation().toURI());
-            Path home = FabricLoader.getInstance().getGameDir().resolve("paperlab");
+            Path game = FabricLoader.getInstance().getGameDir();
+            Path home = java.nio.file.Files.isDirectory(game.resolve("paperlab")) ? game.resolve("paperlab") : game.resolve("loctest");
             java.nio.file.Files.createDirectories(home);
             new ProcessBuilder(javaExecutable(), "-Djava.awt.headless=false", "-jar", jar.toString(), home.toString())
                 .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(home.resolve("panel.log").toFile())).start();
@@ -21,4 +22,3 @@ public final class LocTestMod implements ClientModInitializer {
         return Path.of(System.getProperty("java.home"), "bin", System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java").toString();
     }
 }
-
